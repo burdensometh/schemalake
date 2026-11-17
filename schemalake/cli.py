@@ -73,6 +73,10 @@ def parser():
     route = commands.add_parser('route')
     route.add_argument('request_file')
     commands.add_parser('inventory')
+    migrate = commands.add_parser('migrate-manifests')
+    migrate.add_argument('table', nargs='?')
+    migrate.add_argument('--limit', type=int)
+    commands.add_parser('manifest-status')
     serve = commands.add_parser('serve')
     serve.add_argument('--host', default='127.0.0.1')
     serve.add_argument('--port', type=int, default=8762)
@@ -129,6 +133,10 @@ def execute(lake, args):
         return lake.routing.route(**json_file(args.request_file))
     if operation == 'inventory':
         return lake.diagnostics.inventory()
+    if operation == 'migrate-manifests':
+        return lake.migration.migrate(args.table, args.limit)
+    if operation == 'manifest-status':
+        return lake.migration.status()
     if operation == 'serve':
         from .api import server
         http = server(lake, args.host, args.port)

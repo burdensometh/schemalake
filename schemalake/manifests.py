@@ -1,8 +1,16 @@
+from bisect import bisect_left
 from decimal import Decimal
 from pathlib import PurePosixPath
 import re
 
-from .types import Conflict, Invalid, convert, name
+from .types import Conflict, Invalid, canonical, convert, name
+
+
+FORMAT_V1 = 1
+FORMAT_V2 = 2
+SUPPORTED = {FORMAT_V1, FORMAT_V2}
+CORE_KEYS = {'format_version', 'table', 'snapshot_id', 'schema_version', 'parent_id', 'operation'}
+DELTA_KEYS = {'files', 'base', 'removed'}
 
 
 class ManifestValidator:
@@ -29,6 +37,18 @@ class ManifestValidator:
         suffix = '.jsonl.gz' if encoding == 'gzip-jsonl' else '.jsonl'
         if path.parts[4] != checksum + suffix:
             raise Conflict('object filename does not match content identity or encoding')
+        return value
+
+    def manifest_path(self, value, table_name):
+        if not isinstance(value, str):
+            raise Conflict('manifest path must be text')
+        path = PurePosixPath(value)
+        if path.is_absolute() or '..' in path.parts or '\\' in value:
+            raise Conflict('manifest path must be a safe relative POSIX path')
+        if len(path.parts) != 4 or path.parts[:2] != ('tables', table_name) or path.parts[2] != 'manifests':
+            raise Conflict('manifest is outside its table manifest prefix')
+        if not re.fullmatch('[0-9a-f]{64}\\.json', path.parts[3]):
+            raise Conflict('manifest filename must be a content identity')
         return value
 
     def statistics(self, value, row_count):
@@ -83,14 +103,19 @@ class ManifestValidator:
         self.statistics(value['statistics'], count)
         return value
 
-    def document(self, value, record):
+    def format_version(self, value):
         if not isinstance(value, dict):
             raise Conflict('snapshot manifest must be an object')
+        version = value.get('format_version', FORMAT_V1)
+        if version not in SUPPORTED:
+            raise Conflict('unsupported snapshot manifest format')
+        return version
+
+    def common(self, value, record):
+        version = self.format_version(value)
         required = {'table', 'snapshot_id', 'schema_version', 'parent_id', 'operation', 'files'}
         if not required <= set(value):
             raise Conflict('snapshot manifest is missing required fields')
-        if value.get('format_version', 1) != 1:
-            raise Conflict('unsupported snapshot manifest format')
         table_name = value['table']
         try:
             name(table_name)
@@ -98,27 +123,100 @@ class ManifestValidator:
             raise Conflict('invalid manifest table name') from None
         if table_name != record['table_name']:
             raise Conflict('manifest belongs to a different table')
-        snapshot = self.integer(value['snapshot_id'], 'snapshot id', 1)
-        if snapshot != record['id']:
+        if self.integer(value['snapshot_id'], 'snapshot id', 1) != record['id']:
             raise Conflict('manifest snapshot identity differs from catalog')
         parent = value['parent_id']
         if parent is not None:
             self.integer(parent, 'parent snapshot id', 1)
-            if parent >= snapshot:
+            if parent >= value['snapshot_id']:
                 raise Conflict('manifest parent must precede its child')
         if parent != record['parent_id']:
             raise Conflict('manifest parent differs from catalog')
         self.integer(value['schema_version'], 'snapshot schema version', 1)
         if value['operation'] != record['operation']:
             raise Conflict('manifest operation differs from catalog')
+        return version, table_name
+
+    def base(self, value, table_name, snapshot, parent):
+        base = value.get('base')
+        if base is None:
+            return None
+        if not isinstance(base, dict) or set(base) != {'snapshot_id', 'manifest_path', 'manifest_sha256'}:
+            raise Conflict('manifest base reference has an invalid shape')
+        base_id = self.integer(base['snapshot_id'], 'base snapshot id', 1)
+        if parent is None or base_id != parent:
+            raise Conflict('manifest base must be its parent snapshot')
+        self.manifest_path(base['manifest_path'], table_name)
+        checksum = self.checksum(base['manifest_sha256'], 'base manifest checksum')
+        if PurePosixPath(base['manifest_path']).parts[3] != checksum + '.json':
+            raise Conflict('base manifest path does not match its content identity')
+        return base
+
+    def removals(self, value):
+        removed = value.get('removed')
+        if removed is None:
+            return {}
+        if not isinstance(removed, dict):
+            raise Conflict('manifest removed files must be an object')
+        for checksum, count in removed.items():
+            self.checksum(checksum, 'removed file id')
+            self.integer(count, 'removed file count', 1)
+        return removed
+
+    def fragment(self, value, table_name, snapshot_id):
+        """Validate a manifest reached through a base reference.
+
+        A base reference names an immutable document; it is not required to be
+        the manifest the catalog currently associates with its snapshot, so
+        only the document's own identity and structure are checked here.
+        """
+        version = self.format_version(value)
+        required = {'table', 'snapshot_id', 'schema_version', 'parent_id', 'operation', 'files'}
+        if not required <= set(value):
+            raise Conflict('snapshot manifest is missing required fields')
+        if value['table'] != table_name:
+            raise Conflict('manifest base belongs to a different table')
+        if self.integer(value['snapshot_id'], 'base snapshot id', 1) != snapshot_id:
+            raise Conflict('manifest base reference resolves to another snapshot')
+        parent = value['parent_id']
+        if parent is not None:
+            self.integer(parent, 'parent snapshot id', 1)
+            if parent >= snapshot_id:
+                raise Conflict('manifest parent must precede its child')
+        self.integer(value['schema_version'], 'snapshot schema version', 1)
+        if not isinstance(value['operation'], str) or not value['operation']:
+            raise Conflict('manifest operation must be a nonempty string')
+        if version == FORMAT_V2:
+            self.base(value, table_name, snapshot_id, parent)
+            self.removals(value)
+        self.file_list(value, table_name)
+        return version
+
+    def file_list(self, value, table_name):
         if not isinstance(value['files'], list):
             raise Conflict('manifest files must be an array')
         for item in value['files']:
             self.file(table_name, item)
-        total = sum(file['row_count'] for file in value['files'])
-        if total != record['row_count']:
+        return value['files']
+
+    def document(self, value, record):
+        version, table_name = self.common(value, record)
+        if version == FORMAT_V1:
+            files = self.file_list(value, table_name)
+            if sum(file['row_count'] for file in files) != record['row_count']:
+                raise Conflict('manifest row total differs from catalog')
+            return version
+        self.base(value, table_name, value['snapshot_id'], value['parent_id'])
+        self.removals(value)
+        self.file_list(value, table_name)
+        return version
+
+    def resolved(self, value, record):
+        version, table_name = self.common(value, record)
+        files = self.file_list(value, table_name)
+        if sum(file['row_count'] for file in files) != record['row_count']:
             raise Conflict('manifest row total differs from catalog')
-        return value
+        return version
 
     def schema_binding(self, schema, file, version):
         if file['schema_version'] != version:
@@ -149,3 +247,98 @@ class ManifestValidator:
             if low > high:
                 raise Conflict('statistics lower bound exceeds upper bound')
         return file
+
+
+def reference(record):
+    return {'snapshot_id': record['id'],
+            'manifest_path': record['manifest_path'],
+            'manifest_sha256': record['manifest_sha256']}
+
+
+def derive_delta(previous, current):
+    """Return (removed multiset, added suffix) or ``None`` when not expressible.
+
+    Real commits present a new file list as the surviving prefix of the
+    previous list followed by new descriptors.  The longest such prefix is
+    matched as an ordered subsequence; every unmatched previous descriptor is
+    removed by file id and the remaining current suffix is added.  Repeated
+    references to one object are preserved.  A pair that cannot be expressed
+    this way falls back to a self-contained list instead of guessing.
+    """
+    positions = {}
+    for index, file in enumerate(previous):
+        positions.setdefault(canonical(file), []).append(index)
+    used = []
+    cursor = 0
+    matched = 0
+    for file in current:
+        bucket = positions.get(canonical(file), [])
+        offset = bisect_left(bucket, cursor)
+        if offset == len(bucket):
+            break
+        cursor = bucket[offset] + 1
+        used.append(bucket[offset])
+        matched += 1
+    used_set = set(used)
+    removed = {}
+    for index, file in enumerate(previous):
+        if index not in used_set:
+            removed[file['id']] = removed.get(file['id'], 0) + 1
+    added = list(current[matched:])
+    try:
+        replay = apply_delta(previous, removed, added)
+    except Conflict:
+        return None
+    if len(replay) != len(current) or any(
+        canonical(left) != canonical(right) for left, right in zip(replay, current)
+    ):
+        return None
+    return removed, added
+
+
+def apply_delta(previous, removed, added):
+    """Remove the trailing occurrences named by ``removed`` and append ``added``.
+
+    ``derive_delta`` retains the earliest occurrence of a repeated descriptor,
+    so the removed copies are the trailing ones; deleting from the end leaves
+    the order of surviving descriptors unchanged.
+    """
+    remaining = dict(removed or {})
+    survivors = []
+    for file in reversed(previous):
+        count = remaining.get(file['id'], 0)
+        if count:
+            remaining[file['id']] = count - 1
+        else:
+            survivors.append(file)
+    if any(remaining.values()):
+        raise Conflict('manifest removes more file copies than its base holds')
+    survivors.reverse()
+    survivors.extend(added)
+    return survivors
+
+
+def build_document(table_name, snapshot_id, schema_version, parent_id, operation,
+                   current_files, previous_record=None, previous_files=None, more=None):
+    document = {
+        'format_version': FORMAT_V2,
+        'table': table_name,
+        'snapshot_id': snapshot_id,
+        'schema_version': schema_version,
+        'parent_id': parent_id,
+        'operation': operation,
+    }
+    for key, value in (more or {}).items():
+        if key not in CORE_KEYS and key not in DELTA_KEYS:
+            document[key] = value
+    delta = None
+    if previous_record is not None and previous_files is not None:
+        delta = derive_delta(previous_files, list(current_files))
+    if delta is None:
+        document['base'] = None
+        document['removed'] = {}
+        document['files'] = list(current_files)
+    else:
+        document['base'] = reference(previous_record)
+        document['removed'], document['files'] = delta
+    return document

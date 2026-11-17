@@ -24,6 +24,7 @@ from .staging import StagedIngestor
 from .reconcile import Reconcile
 from .enrichment import Enrichment
 from .provenance import Provenance
+from .migration import ManifestMigration
 
 
 class Lake:
@@ -31,7 +32,7 @@ class Lake:
         self.home = Path(home).resolve()
         self.home.mkdir(parents=True, exist_ok=True)
         self.catalog = Catalog(self.home)
-        self.objects = EncodedObjects(self.home / 'objects', encoding)
+        self.objects = EncodedObjects(self.home / 'objects', encoding).bind(self.catalog)
         self.ingest = BatchIngestor(self.catalog, self.objects, file_rows)
         self.scan = Scanner(self.catalog, self.objects)
         self.maintenance = Maintenance(self.catalog, self.objects)
@@ -53,3 +54,4 @@ class Lake:
         self.reconcile = Reconcile(self.catalog, self.scan)
         self.enrichment = Enrichment(self.catalog, self.joins, self.maintenance)
         self.provenance = Provenance(self.catalog, self.objects)
+        self.migration = ManifestMigration(self.catalog, self.objects)

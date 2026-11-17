@@ -1,3 +1,4 @@
+from .manifests import build_document
 from .types import Conflict, canonical, timestamp
 
 
@@ -5,27 +6,33 @@ class SnapshotCommitter:
     def __init__(self, catalog, objects):
         self.catalog = catalog
         self.objects = objects
+        if getattr(objects, 'catalog', None) is None and hasattr(objects, 'bind'):
+            objects.bind(catalog)
 
-    def current(self, connection, table_name):
+    def previous(self, connection, table_name):
+        """Return (record, files) for the current head, or (None, []) when empty."""
         table = self.catalog.table(table_name, connection)
         if not table['head']:
-            return []
+            return None, []
         record = dict(connection.execute(
             'SELECT * FROM snapshots WHERE table_name=? AND id=?',
             (table_name, table['head']),
         ).fetchone())
-        return self.objects.manifest(record)['files']
+        return record, self.objects.manifest(record)['files']
 
-    def commit(self, connection, table_name, operation, files, expected_head=None, detail=None):
+    def current(self, connection, table_name):
+        return self.previous(connection, table_name)[1]
+
+    def commit(self, connection, table_name, operation, files, expected_head=None, detail=None, more=None):
         table = self.catalog.table(table_name, connection)
         if expected_head is not None and table['head'] != expected_head:
             raise Conflict('snapshot head changed')
+        previous_record, previous_files = self.previous(connection, table_name)
         snapshot_id = table['head'] + 1
-        document = {
-            'format_version': 1, 'table': table_name, 'snapshot_id': snapshot_id,
-            'schema_version': table['schema_version'], 'parent_id': table['head'] or None,
-            'operation': operation, 'files': files,
-        }
+        document = build_document(
+            table_name, snapshot_id, table['schema_version'], table['head'] or None,
+            operation, files, previous_record, previous_files, more,
+        )
         path, checksum = self.objects.write_manifest(table_name, document)
         count = sum(file['row_count'] for file in files)
         connection.execute(

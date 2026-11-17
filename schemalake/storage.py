@@ -12,6 +12,11 @@ class Objects:
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.catalog = None
+
+    def bind(self, catalog):
+        self.catalog = catalog
+        return self
 
     def path(self, relative):
         path = (self.root / relative).resolve()
@@ -91,15 +96,82 @@ class Objects:
     def write_manifest(self, table_name, document):
         return self.put(f"tables/{table_name}/manifests", canonical(document).encode(), "json")
 
+    def chain(self, record):
+        """Return [(reference, document, format_version)] newest first.
+
+        Base references name immutable manifest documents.  Migration may
+        supersede the document a parent catalog row points at while a child
+        still records the older identity, so a base link is verified against
+        its own embedded snapshot identity rather than the catalog row.
+        """
+        from .manifests import FORMAT_V1, ManifestValidator
+
+        validator = ManifestValidator()
+        table_name = record["table_name"]
+        current = {
+            "catalog": record,
+            "snapshot_id": record["id"],
+            "manifest_path": record["manifest_path"],
+            "manifest_sha256": record["manifest_sha256"],
+        }
+        seen = set()
+        result = []
+        while True:
+            identity = (current["manifest_path"], current["manifest_sha256"])
+            if identity in seen:
+                raise Conflict("manifest base chain contains a cycle")
+            seen.add(identity)
+            document = json.loads(self.read(*identity))
+            catalog = current.get("catalog")
+            if catalog is not None:
+                version = validator.document(document, catalog)
+            else:
+                version = validator.fragment(document, table_name, current["snapshot_id"])
+            result.append((current, document, version))
+            if version == FORMAT_V1:
+                return result
+            base = document.get("base")
+            if base is None:
+                return result
+            if base["snapshot_id"] != document["parent_id"]:
+                raise Conflict("manifest base must be its parent snapshot")
+            current = {
+                "snapshot_id": base["snapshot_id"],
+                "manifest_path": base["manifest_path"],
+                "manifest_sha256": base["manifest_sha256"],
+            }
+
     def manifest(self, record):
-        document = json.loads(self.read(record["manifest_path"], record["manifest_sha256"]))
-        from .manifests import ManifestValidator
-        ManifestValidator().document(document, record)
-        if document["snapshot_id"] != record["id"]:
-            raise Conflict("manifest snapshot identity mismatch")
-        if sum(file["row_count"] for file in document["files"]) != record["row_count"]:
-            raise Conflict("manifest row total mismatch")
-        return document
+        from .manifests import FORMAT_V1, ManifestValidator, apply_delta
+
+        chain = self.chain(record)
+        files = None
+        for _, document, version in reversed(chain):
+            if version == FORMAT_V1 or document.get("base") is None:
+                files = list(document["files"])
+            else:
+                files = apply_delta(files, document.get("removed"), document["files"])
+        if files is None:
+            raise Conflict("manifest base chain has no root file list")
+        _, document, version = chain[0]
+        resolved = {
+            "format_version": version,
+            "table": document["table"],
+            "snapshot_id": document["snapshot_id"],
+            "schema_version": document["schema_version"],
+            "parent_id": document["parent_id"],
+            "operation": document["operation"],
+            "files": files,
+        }
+        if version != FORMAT_V1:
+            resolved["base"] = document.get("base")
+            resolved["removed"] = dict(document.get("removed") or {})
+            resolved["added"] = list(document.get("files") or [])
+        ManifestValidator().resolved(resolved, record)
+        return resolved
+
+    def manifest_paths(self, record):
+        return {item["manifest_path"] for item, _, _ in self.chain(record)}
 
     def inventory(self):
         return [

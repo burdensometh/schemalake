@@ -77,6 +77,8 @@ def handler_for(lake):
             parts, params = self.query()
             if parts == ['health']:
                 return self.send_json(200, {'status': 'ok', 'format_version': 1})
+            if parts == ['manifests'] and params.get('status') == 'migration':
+                return self.send_json(200, lake.migration.status())
             if parts == ['tables']:
                 return self.send_json(200, lake.catalog.tables())
             if len(parts) == 2 and parts[0] == 'exports':

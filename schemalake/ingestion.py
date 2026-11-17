@@ -1,6 +1,7 @@
 from collections import defaultdict
 import re
 
+from .manifests import build_document
 from .types import Conflict, Invalid, canonical, sha, timestamp
 
 
@@ -10,6 +11,8 @@ class BatchIngestor:
             raise Invalid("file_rows must be a positive integer")
         self.catalog = catalog
         self.objects = objects
+        if getattr(objects, 'catalog', None) is None and hasattr(objects, 'bind'):
+            objects.bind(catalog)
         self.file_rows = file_rows
 
     def validate_batch_id(self, batch_id):
@@ -54,11 +57,12 @@ class BatchIngestor:
                         raise Invalid(f"row {ordinal}: {error}") from error
                     rejects.append((ordinal, str(error), canonical(raw)))
             old_files = []
+            previous_record = None
             if table["head"]:
-                head = dict(connection.execute(
+                previous_record = dict(connection.execute(
                     "SELECT * FROM snapshots WHERE table_name=? AND id=?", (table_name, table["head"])
                 ).fetchone())
-                old_files = self.objects.manifest(head)["files"]
+                old_files = self.objects.manifest(previous_record)["files"]
             snapshot_id = table["head"] + 1
             added = []
             for partition_json, partition_rows in sorted(partitions.items()):
@@ -73,18 +77,13 @@ class BatchIngestor:
                         partition_rows[offset:offset + self.file_rows],
                     )
                     added.append(file)
-            document = {
-                "format_version": 1,
-                "table": table_name,
-                "snapshot_id": snapshot_id,
-                "schema_version": table["schema_version"],
-                "parent_id": table["head"] or None,
-                "operation": "append",
-                "batch_id": batch_id,
-                "files": old_files + added,
-            }
+            document = build_document(
+                table_name, snapshot_id, table["schema_version"], table["head"] or None,
+                "append", old_files + added, previous_record, old_files,
+                {"batch_id": batch_id},
+            )
             manifest_path, manifest_sha = self.objects.write_manifest(table_name, document)
-            total_rows = sum(file["row_count"] for file in document["files"])
+            total_rows = sum(file["row_count"] for file in old_files + added)
             connection.execute(
                 "INSERT INTO snapshots VALUES (?,?,?,?,?,?,?,?)",
                 (table_name, snapshot_id, table["head"] or None, "append", manifest_path, manifest_sha, total_rows, timestamp()),

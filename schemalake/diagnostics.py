@@ -12,6 +12,7 @@ class Diagnostics:
         for table in self.catalog.tables():
             for snapshot in self.catalog.snapshots(table['name']):
                 live.add(snapshot['manifest_path'])
+                live.update(self.objects.manifest_paths(snapshot))
                 document = self.objects.manifest(snapshot)
                 live.update(file['path'] for file in document['files'])
         inventory = self.objects.inventory()
