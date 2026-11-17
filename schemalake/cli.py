@@ -19,6 +19,10 @@ def parser():
     create = commands.add_parser('create')
     create.add_argument('table')
     create.add_argument('schema_file')
+    evolve = commands.add_parser('evolve')
+    evolve.add_argument('table')
+    evolve.add_argument('schema_file')
+    evolve.add_argument('--expected-version', type=int)
     commands.add_parser('tables')
     ingest = commands.add_parser('ingest')
     ingest.add_argument('table')
@@ -83,6 +87,8 @@ def execute(lake, args):
     operation = args.command
     if operation == 'create':
         return lake.catalog.create_table(args.table, json_file(args.schema_file))
+    if operation == 'evolve':
+        return lake.evolution.evolve(args.table, json_file(args.schema_file), args.expected_version)
     if operation == 'tables':
         return lake.catalog.tables()
     if operation == 'ingest':

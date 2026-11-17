@@ -87,6 +87,8 @@ def handler_for(lake):
             snapshot = self.integer(params, 'snapshot')
             if action == 'schema':
                 value = lake.catalog.schema(table, self.integer(params, 'version')).encode()
+            elif action == 'schema-versions':
+                value = lake.evolution.versions(table)
             elif action == 'snapshots':
                 value = lake.catalog.snapshots(table)
             elif action == 'plan':
@@ -112,7 +114,9 @@ def handler_for(lake):
                     raise Invalid('limit must be between 1 and 10000')
                 columns = params['columns'].split(',') if 'columns' in params else None
                 plan = lake.scan.plan(table, snapshot)
-                iterator = lake.scan.rows(table, plan['snapshot_id'], columns=columns)
+                # 保留用户原始快照参数：snapshot 为 None 时按 head 读取并投影到当前
+                # schema；传入具体 id 才锁定该历史快照的结构。
+                iterator = lake.scan.rows(table, snapshot, columns=columns)
                 value = {'table': table, 'snapshot_id': plan['snapshot_id'], 'total': plan['rows'],
                          'rows': list(itertools.islice(iterator, offset, offset + limit))}
             else:
@@ -164,7 +168,9 @@ def handler_for(lake):
                     'range': lake.indexes.range,
                     'prepare': lake.staged.prepare, 'commit': lake.staged.commit, 'abort': lake.staged.abort,
                 }
-                if action == 'query':
+                if action == 'evolve':
+                    value = lake.evolution.evolve(table, body['schema'], body.get('expected_version'))
+                elif action == 'query':
                     value = list(lake.scan.where(table, **body))
                 elif action == 'sort':
                     value = list(lake.sort.rows(table, **body))

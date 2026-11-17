@@ -31,9 +31,14 @@ class Diagnostics:
                     raise Conflict('manifest belongs to a different table')
                 if document['parent_id'] != record['parent_id']:
                     raise Conflict('manifest parent differs from catalog')
-                schema = self.catalog.schema(table_name, document['schema_version'])
+                with self.catalog.transaction() as connection:
+                    versions = {file['schema_version'] for file in document['files']}
+                    file_schemas = {version: self.catalog.schema(table_name, version, connection)
+                                    for version in versions}
                 keys = set()
                 for file in document['files']:
+                    # 统计与分区描述符是按文件写入时的 schema 生成的，逐版本校验。
+                    schema = file_schemas[file['schema_version']]
                     rows = [schema.normalize(row) for row in self.objects.read_rows(file)]
                     if any(schema.partition(row) != file['partition'] for row in rows):
                         raise Conflict('object row partition differs from manifest')

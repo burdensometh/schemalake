@@ -59,7 +59,7 @@ class Transforms:
         expressions, predicate = self.compile(source, target, job['document'])
         output = []
         input_rows = 0
-        for row in self.scanner.rows(job['source_table'], plan['snapshot_id']):
+        for row in self.scanner.rows(job['source_table'], snapshot_id):
             input_rows += 1
             if predicate is None or predicate.matches(row):
                 values = {column: expression.evaluate(row) for column, expression in expressions.items()}

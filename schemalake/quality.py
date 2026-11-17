@@ -32,7 +32,7 @@ class Quality:
         violations = [0] * len(compiled)
         samples = [[] for _ in compiled]
         count = 0
-        for row_index, row in enumerate(self.scanner.rows(table_name, plan['snapshot_id'])):
+        for row_index, row in enumerate(self.scanner.rows(table_name, snapshot_id)):
             count += 1
             for ordinal, kind, check, seen in compiled:
                 if kind == 'unique':

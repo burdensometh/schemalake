@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 import json
 import sqlite3
 
-from .types import Invalid, canonical
+from .types import canonical
 
 
 class RowDiff:
@@ -15,9 +15,9 @@ class RowDiff:
     def compare(self, table_name, before, after):
         old = self.scanner.plan(table_name, before)
         new = self.scanner.plan(table_name, after)
-        if old['schema_version'] != new['schema_version']:
-            raise Invalid('row diff requires equal schema versions')
-        schema = self.catalog.schema(table_name, old['schema_version'])
+        # 两个快照按各自的 schema 版本读取：rows() 已把旧文件投影到该快照
+        # 解释所用的结构，主键列不允许演进，因此身份仍可按主键对齐。
+        schema = self.catalog.schema(table_name, new['schema_version'])
         with TemporaryDirectory(prefix='lake-diff-') as temporary:
             database = sqlite3.connect(Path(temporary) / 'diff.sqlite')
             try:

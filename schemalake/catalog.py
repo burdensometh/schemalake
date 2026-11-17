@@ -91,8 +91,18 @@ class Catalog:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(DDL)
             connection.executescript(EXTENSION_DDL)
+            self.migrate(connection)
         finally:
             connection.close()
+
+    def migrate(self, connection):
+        # 旧库的 lookup_indexes 没有 schema_version 列；演进后索引必须按
+        # 构建时的 schema 版本判定可用性，缺列时补为初始版本 1。
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(lookup_indexes)")}
+        if columns and "schema_version" not in columns:
+            connection.execute(
+                "ALTER TABLE lookup_indexes ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1"
+            )
 
     def connect(self):
         connection = sqlite3.connect(self.path, timeout=20, isolation_level=None)

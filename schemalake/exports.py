@@ -39,7 +39,7 @@ class Exports:
                 writer = csv.DictWriter(stream, fieldnames=[field.name for field in schema.fields]) if format == 'csv' else None
                 if writer:
                     writer.writeheader()
-                for row in self.scanner.rows(table_name, plan['snapshot_id'], partition):
+                for row in self.scanner.rows(table_name, snapshot_id, partition):
                     if writer:
                         writer.writerow({key: self.csv_value(value) for key, value in row.items()})
                     else:

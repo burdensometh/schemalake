@@ -24,6 +24,7 @@ from .staging import StagedIngestor
 from .reconcile import Reconcile
 from .enrichment import Enrichment
 from .provenance import Provenance
+from .evolution import SchemaEvolution
 
 
 class Lake:
@@ -53,3 +54,4 @@ class Lake:
         self.reconcile = Reconcile(self.catalog, self.scan)
         self.enrichment = Enrichment(self.catalog, self.joins, self.maintenance)
         self.provenance = Provenance(self.catalog, self.objects)
+        self.evolution = SchemaEvolution(self.catalog)

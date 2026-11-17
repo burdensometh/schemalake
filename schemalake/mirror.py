@@ -34,6 +34,8 @@ class Mirror:
         return connection
 
     def apply(self, scanner, table_name, snapshot_id=None):
+        # snapshot_id 为 None 时读取 head，并按表的当前 schema 投影；
+        # 显式给定 id 才锁定该历史快照的结构。
         plan = scanner.plan(table_name, snapshot_id)
         schema = scanner.catalog.schema(table_name, plan['schema_version'])
         connection = self.connect()
@@ -49,7 +51,7 @@ class Mirror:
                 raise Conflict('cannot apply an older unseen snapshot')
             connection.execute('DELETE FROM rows WHERE table_name=?', (table_name,))
             count = 0
-            for ordinal, row in enumerate(scanner.rows(table_name, plan['snapshot_id'])):
+            for ordinal, row in enumerate(scanner.rows(table_name, snapshot_id)):
                 connection.execute('INSERT INTO rows VALUES (?,?,?)', (table_name, ordinal, canonical(row)))
                 count += 1
             connection.execute('INSERT INTO heads VALUES (?,?,?,?) ON CONFLICT(table_name) DO UPDATE SET '

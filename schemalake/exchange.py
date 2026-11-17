@@ -3,7 +3,8 @@ import hashlib
 import json
 import zipfile
 
-from .types import Conflict, Invalid, canonical
+from .projection import project_row
+from .types import Conflict, Invalid, Schema, canonical
 
 
 class Exchange:
@@ -19,8 +20,13 @@ class Exchange:
             raise Conflict('exchange destination already exists')
         plan = self.scanner.plan(table_name, snapshot_id)
         schema = self.catalog.schema(table_name, plan['schema_version'])
+        with self.catalog.transaction() as connection:
+            versions = {file['schema_version'] for file in plan['files']}
+            schemas = {str(version): self.catalog.schema(table_name, version, connection).encode()
+                       for version in sorted(versions)}
         manifest = {'format': 'schemalake-exchange-v1', 'table': table_name,
-                    'snapshot_id': plan['snapshot_id'], 'schema': schema.encode(), 'files': plan['files']}
+                    'snapshot_id': plan['snapshot_id'], 'schema': schema.encode(),
+                    'schemas': schemas, 'files': plan['files']}
         entries = {}
         for file in plan['files']:
             raw = self.objects.read(file['path'], file['sha256'])
@@ -52,13 +58,18 @@ class Exchange:
                 raise Invalid('exchange manifest is invalid') from None
             if manifest.get('format') != 'schemalake-exchange-v1':
                 raise Invalid('unknown exchange format')
-            from .types import Schema
             schema = Schema.parse(manifest['schema'])
+            # 旧包没有 schemas 映射时，全部文件按快照 schema 版本解析。
+            documents = manifest.get('schemas') or {str(manifest.get('schema_version', 1)): manifest['schema']}
+            file_schemas = {int(version): Schema.parse(document) for version, document in documents.items()}
             expected = {'manifest.json'} | {'objects/' + file['sha256'] for file in manifest['files']}
             if set(names) != expected:
                 raise Invalid('exchange members do not match manifest')
             count = 0
             for file in manifest['files']:
+                source_schema = file_schemas.get(file['schema_version'])
+                if source_schema is None:
+                    raise Conflict('exchange is missing the schema for a file version')
                 raw = archive.read('objects/' + file['sha256'])
                 if hashlib.sha256(raw).hexdigest() != file['sha256'] or len(raw) != file['byte_count']:
                     raise Conflict('exchange object checksum or size mismatch')
@@ -73,8 +84,8 @@ class Exchange:
                 if len(lines) != file['row_count']:
                     raise Conflict('exchange row count mismatch')
                 for line in lines:
-                    row = schema.normalize(json.loads(line))
-                    if schema.partition(row) != file['partition']:
+                    row = source_schema.normalize(json.loads(line))
+                    if source_schema.partition(row) != file['partition']:
                         raise Conflict('exchange row partition mismatch')
                     count += 1
             return {'manifest': manifest, 'rows': count, 'files': len(manifest['files'])}
@@ -85,12 +96,20 @@ class Exchange:
             raise Invalid('atomic exchange import supports at most 100000 rows')
         manifest = inspection['manifest']
         self.catalog.create_table(table_name, manifest['schema'])
+        target = self.catalog.schema(table_name)
+        documents = manifest.get('schemas') or {str(manifest.get('schema_version', 1)): manifest['schema']}
+        file_schemas = {int(version): Schema.parse(document) for version, document in documents.items()}
         rows = []
         with zipfile.ZipFile(path) as archive:
             for file in manifest['files']:
+                source_schema = file_schemas[file['schema_version']]
                 raw = archive.read('objects/' + file['sha256'])
                 if file.get('encoding', 'jsonl') == 'gzip-jsonl':
                     import gzip
                     raw = gzip.decompress(raw)
-                rows.extend(json.loads(line) for line in raw.decode('utf-8').splitlines())
+                for line in raw.decode('utf-8').splitlines():
+                    parsed = source_schema.normalize(json.loads(line))
+                    # 统一投影到建表 schema（即交换包的当前 schema），
+                    # 旧版本对象的改名/新增列/类型拓宽在此收敛。
+                    rows.append(project_row(parsed, source_schema, target))
         return self.ingestor.ingest(table_name, batch_id, rows)

@@ -6,6 +6,7 @@ INSERT OR IGNORE INTO lake_format VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ','now'
 CREATE TABLE IF NOT EXISTS lookup_indexes (
     table_name TEXT PRIMARY KEY REFERENCES lake_tables(name),
     snapshot_id INTEGER NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
     key_columns TEXT NOT NULL,
     entry_count INTEGER NOT NULL,
     built_at TEXT NOT NULL

@@ -121,7 +121,7 @@ class AggregateJobs:
         job = self.get(job_name)
         snapshot = self.scanner.plan(job['source_table'], snapshot_id)
         schema = self.catalog.schema(job['source_table'], snapshot['schema_version'])
-        count, rows = GroupPlan(schema, job['document']).run(self.scanner.rows(job['source_table'], snapshot['snapshot_id']))
+        count, rows = GroupPlan(schema, job['document']).run(self.scanner.rows(job['source_table'], snapshot_id))
         target = self.catalog.schema(job['target_table'])
         return {'job': job, 'input_snapshot': snapshot['snapshot_id'], 'input_rows': count,
                 'rows': [target.normalize(row) for row in rows]}

@@ -1,3 +1,4 @@
+from .projection import project_row
 from .types import Conflict, canonical, timestamp
 
 
@@ -46,12 +47,20 @@ class SnapshotCommitter:
         return snapshot_id
 
     def rebuild_keys(self, connection, table_name, files, batch_id):
-        schema = self.catalog.schema(table_name, connection=connection)
+        table = self.catalog.table(table_name, connection)
+        current_version = table['schema_version']
+        schema = self.catalog.schema(table_name, current_version, connection)
+        versions = {file['schema_version'] for file in files}
+        file_schemas = {version: self.catalog.schema(table_name, version, connection) for version in versions}
         connection.execute('DELETE FROM row_keys WHERE table_name=?', (table_name,))
         keys = set()
         for file in files:
+            source_schema = file_schemas[file['schema_version']]
             for raw in self.objects.read_rows(file):
-                row = schema.normalize(raw)
+                if file['schema_version'] == current_version:
+                    row = schema.normalize(raw)
+                else:
+                    row = project_row(raw, source_schema, schema)
                 key = schema.key(row)
                 if key is not None:
                     if key in keys:

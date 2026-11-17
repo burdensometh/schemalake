@@ -1,5 +1,6 @@
 import json
 
+from .projection import project_row
 from .types import Conflict, Invalid, canonical, convert, timestamp
 
 
@@ -14,10 +15,17 @@ class KeyIndexes:
         schema = self.catalog.schema(table_name, plan['schema_version'])
         if not schema.primary_key:
             raise Invalid('lookup index requires a primary key')
+        # 对象读取在写事务之外完成，避免长事务阻塞并发摄取；schema 用短只读事务加载。
+        versions = {file['schema_version'] for file in plan['files']}
+        file_schemas = {version: self.catalog.schema(table_name, version) for version in versions}
         entries = {}
         for file in plan['files']:
+            source_schema = file_schemas[file['schema_version']]
             for ordinal, raw in enumerate(self.objects.read_rows(file)):
-                row = schema.normalize(raw)
+                if file['schema_version'] == plan['schema_version']:
+                    row = schema.normalize(raw)
+                else:
+                    row = project_row(raw, source_schema, schema)
                 key = schema.key(row)
                 if key in entries:
                     raise Conflict('snapshot contains duplicate key')
@@ -27,8 +35,9 @@ class KeyIndexes:
             if head != plan['snapshot_id']:
                 raise Conflict('cannot publish an index after table head changed')
             connection.execute('DELETE FROM lookup_indexes WHERE table_name=?', (table_name,))
-            connection.execute('INSERT INTO lookup_indexes VALUES (?,?,?,?,?)',
-                               (table_name, plan['snapshot_id'], canonical(list(schema.primary_key)), len(entries), timestamp()))
+            connection.execute('INSERT INTO lookup_indexes VALUES (?,?,?,?,?,?)',
+                               (table_name, plan['snapshot_id'], plan['schema_version'],
+                                canonical(list(schema.primary_key)), len(entries), timestamp()))
             connection.executemany('INSERT INTO lookup_entries VALUES (?,?,?,?)',
                                    ((table_name, key, file, ordinal) for key, (file, ordinal) in entries.items()))
             self.catalog.event(connection, table_name, 'index_built', {'snapshot_id': plan['snapshot_id']})
@@ -48,7 +57,10 @@ class KeyIndexes:
         key = self.normalized_key(schema, values)
         with self.catalog.transaction() as connection:
             index = connection.execute('SELECT * FROM lookup_indexes WHERE table_name=?', (table_name,)).fetchone()
-            if index and index['snapshot_id'] == plan['snapshot_id']:
+            # 索引条目按构建时的 schema 解释文件；只有快照 id 与读取 schema 版本
+            # 同时匹配才可用，演进后对历史快照的查找必须回退到扫描。
+            if index and index['snapshot_id'] == plan['snapshot_id'] \
+                    and self.index_schema_version(index) == plan['schema_version']:
                 entry = connection.execute('SELECT * FROM lookup_entries WHERE table_name=? AND row_key=?',
                                            (table_name, key)).fetchone()
                 if entry is None:
@@ -58,15 +70,27 @@ class KeyIndexes:
             else:
                 file = None
         if file is None:
-            rows = [row for row in self.scanner.rows(table_name, plan['snapshot_id']) if schema.key(row) == key]
+            rows = [row for row in self.scanner.rows(table_name, snapshot_id) if schema.key(row) == key]
             return {'snapshot_id': plan['snapshot_id'], 'used_index': False, 'rows': rows}
         rows = list(self.objects.read_rows(file))
         if not 0 <= ordinal < len(rows):
             raise Conflict('lookup index position is outside object')
-        row = schema.normalize(rows[ordinal])
+        row = self.decode(table_name, file, rows[ordinal], schema, plan['schema_version'])
         if schema.key(row) != key:
             raise Conflict('lookup index points to a different key')
         return {'snapshot_id': plan['snapshot_id'], 'used_index': True, 'rows': [row]}
+
+    @staticmethod
+    def index_schema_version(index):
+        # 旧记录在迁移后带默认值 1；保留 .get 风格兜底以应对手工库。
+        return index['schema_version'] if 'schema_version' in index.keys() else 1
+
+    def decode(self, table_name, file, raw, schema, read_version):
+        """索引指向的对象可能按旧 schema 版本写入，按其版本投影。"""
+        if file['schema_version'] == read_version:
+            return schema.normalize(raw)
+        source_schema = self.catalog.schema(table_name, file['schema_version'])
+        return project_row(raw, source_schema, schema)
 
     def status(self, table_name):
         with self.catalog.transaction() as connection:
@@ -94,8 +118,9 @@ class KeyIndexes:
         def accepts(key):
             return (low is None or key >= low) and (high is None or key < high or (include_upper and key == high))
         with self.catalog.transaction() as connection:
-            index = connection.execute('SELECT snapshot_id FROM lookup_indexes WHERE table_name=?', (table_name,)).fetchone()
-            usable = bool(index and index[0] == plan['snapshot_id'])
+            index = connection.execute('SELECT snapshot_id, schema_version FROM lookup_indexes WHERE table_name=?', (table_name,)).fetchone()
+            usable = bool(index and index[0] == plan['snapshot_id']
+                          and self.index_schema_version(index) == plan['schema_version'])
             entries = list(connection.execute('SELECT * FROM lookup_entries WHERE table_name=?', (table_name,))) if usable else []
         rows = []
         if usable:
@@ -111,12 +136,13 @@ class KeyIndexes:
                 values = file_cache[identity]
                 if not 0 <= entry['ordinal'] < len(values):
                     raise Conflict('range index position is invalid')
-                row = schema.normalize(values[entry['ordinal']])
+                row = self.decode(table_name, file, values[entry['ordinal']],
+                                  schema, plan['schema_version'])
                 if schema.key(row) != entry['row_key']:
                     raise Conflict('range index key is invalid')
                 rows.append((key, row))
         else:
-            for row in self.scanner.rows(table_name, plan['snapshot_id']):
+            for row in self.scanner.rows(table_name, snapshot_id):
                 key = typed(schema.key(row))
                 if accepts(key):
                     rows.append((key, row))

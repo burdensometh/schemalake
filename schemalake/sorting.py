@@ -91,7 +91,7 @@ class SortedRows:
             runs = []
             buffer = []
             sequence = 0
-            for position, row in enumerate(self.scanner.rows(table_name, plan['snapshot_id'])):
+            for position, row in enumerate(self.scanner.rows(table_name, snapshot_id)):
                 buffer.append({'row': row, 'position': position})
                 if len(buffer) == memory_rows:
                     path = root / f'run-{sequence}.jsonl'
