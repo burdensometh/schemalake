@@ -25,7 +25,7 @@ class Exports:
             return '\\' + value
         return value
 
-    def create(self, table_name, snapshot_id=None, format='jsonl', partition=None):
+    def create(self, table_name, snapshot_id=None, format='jsonl', partition=None, expression=None):
         if format not in {'jsonl', 'csv'}:
             raise Invalid('unsupported export format')
         plan = self.scanner.plan(table_name, snapshot_id, partition)
@@ -39,7 +39,11 @@ class Exports:
                 writer = csv.DictWriter(stream, fieldnames=[field.name for field in schema.fields]) if format == 'csv' else None
                 if writer:
                     writer.writeheader()
-                for row in self.scanner.rows(table_name, plan['snapshot_id'], partition):
+                if expression is None:
+                    rows = self.scanner.rows(table_name, plan['snapshot_id'], partition)
+                else:
+                    rows = self.scanner.where(table_name, expression, plan['snapshot_id'], partition)
+                for row in rows:
                     if writer:
                         writer.writerow({key: self.csv_value(value) for key, value in row.items()})
                     else:

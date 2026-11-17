@@ -57,6 +57,7 @@ def parser():
     export.add_argument('table')
     export.add_argument('--snapshot', type=int)
     export.add_argument('--format', choices=['jsonl', 'csv'], default='jsonl')
+    export.add_argument('--predicate-file')
     quality = commands.add_parser('quality')
     quality.add_argument('table')
     quality.add_argument('rules_file')
@@ -116,7 +117,8 @@ def execute(lake, args):
     if operation == 'query':
         return list(lake.scan.where(args.table, json_file(args.predicate_file), args.snapshot))
     if operation == 'export':
-        return lake.exports.create(args.table, args.snapshot, args.format)
+        expression = json_file(args.predicate_file) if args.predicate_file else None
+        return lake.exports.create(args.table, args.snapshot, args.format, expression=expression)
     if operation == 'quality':
         return lake.quality.evaluate(args.table, json_file(args.rules_file), args.snapshot)
     if operation == 'transform-add':

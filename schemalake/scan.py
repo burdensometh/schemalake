@@ -18,7 +18,8 @@ class Scanner:
         columns = known if columns is None else columns
         if not isinstance(columns, list) or set(columns) - set(known):
             raise Invalid('projection includes unknown columns')
-        for row in self.rows(table_name, plan['snapshot_id'], partition):
+        selected = [file for file in plan['files'] if predicate.may_match_file(file)]
+        for row in self.scan_files(plan, schema, selected):
             if predicate.matches(row):
                 yield {key: row[key] for key in columns}
 
@@ -67,14 +68,18 @@ class Scanner:
         columns = known if columns is None else columns
         if not isinstance(columns, list) or set(columns) - set(known):
             raise Invalid("projection includes unknown columns")
-        for file in plan["files"]:
+        for row in self.scan_files(plan, schema, plan["files"]):
+            yield {column: row[column] for column in columns}
+
+    def scan_files(self, plan, schema, files):
+        for file in files:
             if file["schema_version"] != plan["schema_version"]:
                 raise Conflict("baseline snapshots require one schema version")
             for raw in self.objects.read_rows(file):
                 row = schema.normalize(raw)
                 if schema.partition(row) != file["partition"]:
                     raise Conflict("row does not belong to its declared partition")
-                yield {column: row[column] for column in columns}
+                yield row
 
     def statistics(self, table_name, snapshot_id=None, partition=None):
         plan = self.plan(table_name, snapshot_id, partition)
