@@ -73,6 +73,19 @@ def parser():
     route = commands.add_parser('route')
     route.add_argument('request_file')
     commands.add_parser('inventory')
+    expire = commands.add_parser('expire')
+    expire.add_argument('table')
+    expire.add_argument('--retain-recent', type=int, default=1)
+    reclaim = commands.add_parser('reclaim')
+    reclaim.add_argument('--table')
+    retention = commands.add_parser('retention')
+    retention.add_argument('table')
+    pin = commands.add_parser('pin')
+    pin.add_argument('table')
+    pin.add_argument('--snapshot', type=int)
+    pin.add_argument('--ttl', type=int)
+    unpin = commands.add_parser('unpin')
+    unpin.add_argument('token')
     serve = commands.add_parser('serve')
     serve.add_argument('--host', default='127.0.0.1')
     serve.add_argument('--port', type=int, default=8762)
@@ -129,6 +142,16 @@ def execute(lake, args):
         return lake.routing.route(**json_file(args.request_file))
     if operation == 'inventory':
         return lake.diagnostics.inventory()
+    if operation == 'expire':
+        return lake.retention.expire_snapshots(args.table, args.retain_recent)
+    if operation == 'reclaim':
+        return lake.retention.reclaim(args.table)
+    if operation == 'retention':
+        return lake.retention.status(args.table)
+    if operation == 'pin':
+        return lake.retention.pin(args.table, args.snapshot, args.ttl)
+    if operation == 'unpin':
+        return lake.retention.unpin(args.token)
     if operation == 'serve':
         from .api import server
         http = server(lake, args.host, args.port)

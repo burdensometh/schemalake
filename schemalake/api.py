@@ -3,7 +3,7 @@ from urllib.parse import parse_qs, urlsplit
 import itertools
 import json
 
-from .types import Conflict, Invalid, LakeError, Missing, canonical
+from .types import Conflict, Expired, Invalid, LakeError, Missing, canonical
 
 
 def handler_for(lake):
@@ -61,6 +61,8 @@ def handler_for(lake):
                 function()
             except Missing as error:
                 self.send_json(404, {'error': str(error)})
+            except Expired as error:
+                self.send_json(410, {'error': str(error)})
             except Conflict as error:
                 self.send_json(409, {'error': str(error)})
             except (Invalid, TypeError, KeyError) as error:
@@ -79,6 +81,8 @@ def handler_for(lake):
                 return self.send_json(200, {'status': 'ok', 'format_version': 1})
             if parts == ['tables']:
                 return self.send_json(200, lake.catalog.tables())
+            if parts == ['retention', 'runs']:
+                return self.send_json(200, lake.retention.runs(self.integer(params, 'limit', 50)))
             if len(parts) == 2 and parts[0] == 'exports':
                 return self.send_json(200, lake.exports.get(parts[1]))
             if len(parts) != 3 or parts[0] != 'tables':
@@ -89,6 +93,8 @@ def handler_for(lake):
                 value = lake.catalog.schema(table, self.integer(params, 'version')).encode()
             elif action == 'snapshots':
                 value = lake.catalog.snapshots(table)
+            elif action == 'retention':
+                value = lake.retention.status(table)
             elif action == 'plan':
                 value = lake.scan.plan(table, snapshot)
             elif action == 'partitions':
@@ -129,6 +135,8 @@ def handler_for(lake):
                 raise Invalid('POST operations do not take query parameters')
             if parts == ['tables']:
                 value = lake.catalog.create_table(body['name'], body['schema'])
+            elif parts == ['reclaim']:
+                value = lake.retention.reclaim()
             elif parts == ['joins']:
                 value = lake.joins.join(**body)
             elif parts == ['route']:
@@ -163,6 +171,8 @@ def handler_for(lake):
                     'diff': lake.plans.diff,
                     'range': lake.indexes.range,
                     'prepare': lake.staged.prepare, 'commit': lake.staged.commit, 'abort': lake.staged.abort,
+                    'expire': lake.retention.expire_snapshots, 'reclaim': lake.retention.reclaim,
+                    'pin': lake.retention.pin,
                 }
                 if action == 'query':
                     value = list(lake.scan.where(table, **body))
@@ -170,6 +180,10 @@ def handler_for(lake):
                     value = list(lake.sort.rows(table, **body))
                 elif action == 'rowdiff':
                     value = list(lake.rowdiff.compare(table, **body))
+                elif action == 'unpin':
+                    value = lake.retention.unpin(body['token'])
+                elif action == 'renew-lease':
+                    value = lake.retention.renew(body['token'], body.get('ttl_seconds'))
                 elif action in operations:
                     value = operations[action](table, **body)
                 else:

@@ -24,6 +24,7 @@ from .staging import StagedIngestor
 from .reconcile import Reconcile
 from .enrichment import Enrichment
 from .provenance import Provenance
+from .retention import Retention
 
 
 class Lake:
@@ -32,9 +33,10 @@ class Lake:
         self.home.mkdir(parents=True, exist_ok=True)
         self.catalog = Catalog(self.home)
         self.objects = EncodedObjects(self.home / 'objects', encoding)
+        self.retention = Retention(self.catalog, self.objects)
         self.ingest = BatchIngestor(self.catalog, self.objects, file_rows)
-        self.scan = Scanner(self.catalog, self.objects)
-        self.maintenance = Maintenance(self.catalog, self.objects)
+        self.scan = Scanner(self.catalog, self.objects, self.retention)
+        self.maintenance = Maintenance(self.catalog, self.objects, self.retention)
         self.indexes = KeyIndexes(self.catalog, self.objects, self.scan)
         self.plans = Plans(self.catalog, self.scan)
         self.transforms = Transforms(self.catalog, self.scan, self.maintenance)
@@ -43,7 +45,7 @@ class Lake:
         self.quality = Quality(self.catalog, self.scan)
         self.exports = Exports(self.catalog, self.scan, self.home / 'exports')
         self.imports = FileImports(self.catalog, self.ingest)
-        self.diagnostics = Diagnostics(self.catalog, self.objects, self.scan)
+        self.diagnostics = Diagnostics(self.catalog, self.objects, self.scan, self.retention)
         self.stream_imports = StreamImports(self.catalog, self.ingest)
         self.aggregates = AggregateJobs(self.catalog, self.scan, self.maintenance)
         self.rowdiff = RowDiff(self.catalog, self.scan)
@@ -52,4 +54,4 @@ class Lake:
         self.staged = StagedIngestor(self.catalog, self.objects, self.ingest)
         self.reconcile = Reconcile(self.catalog, self.scan)
         self.enrichment = Enrichment(self.catalog, self.joins, self.maintenance)
-        self.provenance = Provenance(self.catalog, self.objects)
+        self.provenance = Provenance(self.catalog, self.objects, self.retention)

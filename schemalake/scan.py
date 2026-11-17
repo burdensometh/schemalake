@@ -5,9 +5,10 @@ from .types import Conflict, Invalid, Missing, convert
 
 
 class Scanner:
-    def __init__(self, catalog, objects):
+    def __init__(self, catalog, objects, retention=None):
         self.catalog = catalog
         self.objects = objects
+        self.retention = retention
 
     def where(self, table_name, expression, snapshot_id=None, partition=None, columns=None):
         from .predicates import Predicate
@@ -35,6 +36,8 @@ class Scanner:
             ).fetchone()
             if record is None:
                 raise Missing("snapshot does not exist")
+            if self.retention is not None:
+                self.retention.require_readable(table_name, snapshot_id, connection)
             return self.objects.manifest(dict(record))
 
     def plan(self, table_name, snapshot_id=None, partition=None):
@@ -96,7 +99,11 @@ class Scanner:
         failures = []
         snapshots = self.catalog.snapshots(table_name)
         checked = set()
+        skipped_expired = 0
         for snapshot in snapshots:
+            if self.retention is not None and self.retention.is_expired(table_name, snapshot["id"]):
+                skipped_expired += 1
+                continue
             try:
                 manifest = self.objects.manifest(snapshot)
                 for file in manifest["files"]:
@@ -105,4 +112,5 @@ class Scanner:
                         checked.add(file["path"])
             except (Conflict, Invalid, Missing, ValueError) as error:
                 failures.append({"snapshot": snapshot["id"], "error": str(error)})
-        return {"ok": not failures, "snapshots": len(snapshots), "files": len(checked), "failures": failures}
+        return {"ok": not failures, "snapshots": len(snapshots), "files": len(checked),
+                "skipped_expired": skipped_expired, "failures": failures}

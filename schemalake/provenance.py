@@ -4,9 +4,10 @@ from .types import Conflict, Invalid, Missing
 
 
 class Provenance:
-    def __init__(self, catalog, objects):
+    def __init__(self, catalog, objects, retention=None):
         self.catalog = catalog
         self.objects = objects
+        self.retention = retention
 
     def lineage(self, table_name, snapshot_id=None):
         result = []
@@ -15,6 +16,8 @@ class Provenance:
             current = table['head'] if snapshot_id is None else snapshot_id
             if type(current) is not int or current < 0:
                 raise Invalid('snapshot id must be a nonnegative integer')
+            if current and self.retention is not None:
+                self.retention.require_readable(table_name, current, connection)
             visited = set()
             while current:
                 if current in visited:
@@ -24,6 +27,8 @@ class Provenance:
                 if row is None:
                     raise Missing('snapshot lineage points to an absent snapshot')
                 item = dict(row)
+                if self.retention is not None:
+                    item['expired'] = self.retention.is_expired(table_name, current, connection)
                 result.append(item)
                 current = item['parent_id']
         return result
@@ -58,6 +63,8 @@ class Provenance:
         references = []
         for table in self.catalog.tables():
             for snapshot in self.catalog.snapshots(table['name']):
+                if self.retention is not None and self.retention.is_expired(table['name'], snapshot['id']):
+                    continue
                 document = self.objects.manifest(snapshot)
                 count = sum(file['path'] == relative_path for file in document['files'])
                 if count:

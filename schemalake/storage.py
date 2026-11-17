@@ -49,6 +49,15 @@ class Objects:
             raise Conflict(f"checksum mismatch: {relative}")
         return raw
 
+    def delete(self, relative):
+        """Remove one content-addressed object. Idempotent: a missing file is already gone."""
+        path = self.path(relative)
+        try:
+            os.unlink(path)
+            return True
+        except FileNotFoundError:
+            return False
+
     def statistics(self, schema, rows):
         result = {}
         for field in schema.fields:

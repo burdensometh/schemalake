@@ -4,9 +4,10 @@ from .writer import DataWriter
 
 
 class Maintenance:
-    def __init__(self, catalog, objects):
+    def __init__(self, catalog, objects, retention=None):
         self.catalog = catalog
         self.objects = objects
+        self.retention = retention
         self.committer = SnapshotCommitter(catalog, objects)
 
     def partition_filter(self, schema, partition):
@@ -61,7 +62,7 @@ class Maintenance:
 
     def partitions(self, table_name, snapshot_id=None):
         from .scan import Scanner
-        plan = Scanner(self.catalog, self.objects).plan(table_name, snapshot_id)
+        plan = Scanner(self.catalog, self.objects, self.retention).plan(table_name, snapshot_id)
         result = {}
         for file in plan['files']:
             key = tuple(sorted(file['partition'].items()))

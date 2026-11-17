@@ -22,6 +22,12 @@ class Missing(LakeError):
     pass
 
 
+class Expired(LakeError):
+    """Raised when a snapshot has been explicitly expired and is no longer readable."""
+
+    pass
+
+
 def canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
