@@ -101,6 +101,8 @@ def handler_for(lake):
                 value = lake.provenance.snapshot(table, snapshot)
             elif action == 'history':
                 value = lake.diagnostics.history(table, self.integer(params, 'limit', 100))
+            elif action == 'changes':
+                value = lake.changes.progress(table)
             elif action == 'check':
                 value = lake.diagnostics.check(table)
             elif action == 'exports':
@@ -156,7 +158,8 @@ def handler_for(lake):
             elif len(parts) == 3 and parts[0] == 'tables':
                 table, action = parts[1:]
                 operations = {
-                    'ingest': lake.ingest.ingest, 'replace': lake.maintenance.replace,
+                    'ingest': lake.ingest.ingest, 'changes': lake.changes.ingest,
+                    'replace': lake.maintenance.replace,
                     'compact': lake.maintenance.compact, 'lookup': lake.indexes.lookup,
                     'index': lake.indexes.build, 'preview': lake.plans.preview_ingest,
                     'export': lake.exports.create, 'quality': lake.quality.evaluate,

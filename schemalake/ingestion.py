@@ -12,7 +12,8 @@ class BatchIngestor:
         self.objects = objects
         self.file_rows = file_rows
 
-    def validate_batch_id(self, batch_id):
+    @staticmethod
+    def validate_batch_id(batch_id):
         if not isinstance(batch_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}", batch_id):
             raise Invalid("invalid batch id")
 

@@ -3,6 +3,7 @@ from pathlib import Path
 from .catalog import Catalog
 from .storage import Objects
 from .ingestion import BatchIngestor
+from .changes import ChangeIngestor
 from .scan import Scanner
 from .maintenance import Maintenance
 from .indexes import KeyIndexes
@@ -33,6 +34,7 @@ class Lake:
         self.catalog = Catalog(self.home)
         self.objects = EncodedObjects(self.home / 'objects', encoding)
         self.ingest = BatchIngestor(self.catalog, self.objects, file_rows)
+        self.changes = ChangeIngestor(self.catalog, self.objects, file_rows)
         self.scan = Scanner(self.catalog, self.objects)
         self.maintenance = Maintenance(self.catalog, self.objects)
         self.indexes = KeyIndexes(self.catalog, self.objects, self.scan)

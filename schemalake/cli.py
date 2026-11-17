@@ -26,6 +26,13 @@ def parser():
     ingest.add_argument('records_file')
     ingest.add_argument('--invalid', choices=['reject', 'quarantine'], default='reject')
     ingest.add_argument('--expected-head', type=int)
+    changes = commands.add_parser('changes')
+    changes.add_argument('table')
+    changes.add_argument('batch_id')
+    changes.add_argument('events_file')
+    changes.add_argument('--expected-head', type=int)
+    change_progress = commands.add_parser('change-progress')
+    change_progress.add_argument('table')
     load = commands.add_parser('import')
     load.add_argument('table')
     load.add_argument('import_id')
@@ -87,6 +94,10 @@ def execute(lake, args):
         return lake.catalog.tables()
     if operation == 'ingest':
         return lake.ingest.ingest(args.table, args.batch_id, json_file(args.records_file), args.invalid, args.expected_head)
+    if operation == 'changes':
+        return lake.changes.ingest(args.table, args.batch_id, json_file(args.events_file), args.expected_head)
+    if operation == 'change-progress':
+        return lake.changes.progress(args.table)
     if operation == 'import':
         return lake.imports.load(args.table, args.import_id, args.input_file, args.format)
     if operation == 'rows':
