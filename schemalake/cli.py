@@ -66,6 +66,17 @@ def parser():
     transform.add_argument('source')
     transform.add_argument('target')
     transform.add_argument('definition_file')
+    aggregate = commands.add_parser('aggregate-add')
+    aggregate.add_argument('job')
+    aggregate.add_argument('source')
+    aggregate.add_argument('target')
+    aggregate.add_argument('definition_file')
+    refresh_aggregate = commands.add_parser('refresh-aggregate')
+    refresh_aggregate.add_argument('job')
+    refresh_aggregate.add_argument('--snapshot', type=int)
+    refresh_aggregate.add_argument('--expected-target', type=int)
+    aggregate_status = commands.add_parser('aggregate-status')
+    aggregate_status.add_argument('job')
     for operation in ['refresh', 'preview-transform']:
         command = commands.add_parser(operation)
         command.add_argument('job')
@@ -121,6 +132,12 @@ def execute(lake, args):
         return lake.quality.evaluate(args.table, json_file(args.rules_file), args.snapshot)
     if operation == 'transform-add':
         return lake.transforms.register(args.job, args.source, args.target, json_file(args.definition_file))
+    if operation == 'aggregate-add':
+        return lake.aggregates.register(args.job, args.source, args.target, json_file(args.definition_file))
+    if operation == 'refresh-aggregate':
+        return lake.aggregates.refresh(args.job, args.snapshot, args.expected_target)
+    if operation == 'aggregate-status':
+        return lake.aggregates.status(args.job)
     if operation == 'refresh':
         return lake.transforms.refresh(args.job, args.snapshot)
     if operation == 'preview-transform':

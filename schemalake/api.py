@@ -81,6 +81,12 @@ def handler_for(lake):
                 return self.send_json(200, lake.catalog.tables())
             if len(parts) == 2 and parts[0] == 'exports':
                 return self.send_json(200, lake.exports.get(parts[1]))
+            if len(parts) == 3 and parts[0] == 'aggregates':
+                if parts[2] == 'status':
+                    return self.send_json(200, lake.aggregates.status(parts[1]))
+                if parts[2] == 'history':
+                    return self.send_json(200, lake.aggregates.history(parts[1]))
+                raise Missing('endpoint does not exist')
             if len(parts) != 3 or parts[0] != 'tables':
                 raise Missing('endpoint does not exist')
             table, action = parts[1:]

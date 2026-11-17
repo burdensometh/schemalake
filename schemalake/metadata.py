@@ -89,4 +89,17 @@ CREATE TABLE IF NOT EXISTS aggregate_runs (
     output_rows INTEGER NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS aggregate_watermarks (
+    job_name TEXT PRIMARY KEY REFERENCES aggregate_jobs(name),
+    source_snapshot INTEGER NOT NULL,
+    target_snapshot INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS aggregate_contributions (
+    job_name TEXT NOT NULL REFERENCES aggregate_jobs(name),
+    partition_json TEXT NOT NULL,
+    group_json TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    PRIMARY KEY(job_name, partition_json, group_json)
+);
 """
