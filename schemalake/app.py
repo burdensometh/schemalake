@@ -21,6 +21,7 @@ from .sorting import SortedRows
 from .encoded_storage import EncodedObjects
 from .exchange import Exchange
 from .staging import StagedIngestor
+from .compaction import CompactionPlanner
 from .reconcile import Reconcile
 from .enrichment import Enrichment
 from .provenance import Provenance
@@ -34,7 +35,8 @@ class Lake:
         self.objects = EncodedObjects(self.home / 'objects', encoding)
         self.ingest = BatchIngestor(self.catalog, self.objects, file_rows)
         self.scan = Scanner(self.catalog, self.objects)
-        self.maintenance = Maintenance(self.catalog, self.objects)
+        self.compaction = CompactionPlanner(self.catalog, self.objects, self.scan)
+        self.maintenance = Maintenance(self.catalog, self.objects, self.compaction)
         self.indexes = KeyIndexes(self.catalog, self.objects, self.scan)
         self.plans = Plans(self.catalog, self.scan)
         self.transforms = Transforms(self.catalog, self.scan, self.maintenance)

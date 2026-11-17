@@ -170,6 +170,14 @@ def handler_for(lake):
                     value = list(lake.sort.rows(table, **body))
                 elif action == 'rowdiff':
                     value = list(lake.rowdiff.compare(table, **body))
+                elif action == 'compact-prepare':
+                    value = lake.compaction.prepare(table, **body)
+                elif action == 'compact-commit':
+                    value = lake.compaction.commit(body['job_id'])
+                elif action == 'compact-abort':
+                    value = lake.compaction.abort(body['job_id'])
+                elif action == 'compact-jobs':
+                    value = lake.compaction.jobs(table)
                 elif action in operations:
                     value = operations[action](table, **body)
                 else:

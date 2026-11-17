@@ -193,6 +193,41 @@ class ServicesTest(unittest.TestCase):
         self.assertEqual(result['source_snapshots'], {'readings': 1, 'calibration': 1})
         self.assertEqual(list(self.lake.scan.rows('corrected'))[0]['reading'], '13')
 
+    def test_http_two_phase_compaction_endpoints(self):
+        http = server(self.lake, port=0)
+        thread = threading.Thread(target=http.serve_forever, daemon=True)
+        thread.start()
+        url = f'http://127.0.0.1:{http.server_port}'
+        try:
+            for batch_id, ident in [('b1', 1), ('b2', 2)]:
+                request = Request(url + '/tables/readings/ingest',
+                                  data=json.dumps({'batch_id': batch_id, 'rows': [row(ident)]}).encode(),
+                                  headers={'Content-Type': 'application/json'})
+                with urlopen(request) as response:
+                    json.load(response)
+            request = Request(url + '/tables/readings/compact-prepare',
+                              data=json.dumps({'target_rows': 100}).encode(),
+                              headers={'Content-Type': 'application/json'})
+            with urlopen(request) as response:
+                job = json.load(response)
+            self.assertEqual(job['status'], 'prepared')
+            request = Request(url + '/tables/readings/compact-jobs', data=b'{}',
+                              headers={'Content-Type': 'application/json'})
+            with urlopen(request) as response:
+                self.assertEqual(len(json.load(response)), 1)
+            request = Request(url + '/tables/readings/compact-commit',
+                              data=json.dumps({'job_id': job['job_id']}).encode(),
+                              headers={'Content-Type': 'application/json'})
+            with urlopen(request) as response:
+                published = json.load(response)
+            self.assertEqual(published['rows'], 2)
+            with urlopen(url + '/tables/readings/rows') as response:
+                self.assertEqual(len(json.load(response)['rows']), 2)
+        finally:
+            http.shutdown()
+            http.server_close()
+            thread.join(5)
+
     def test_http_uses_persisted_core(self):
         http = server(self.lake, port=0)
         thread = threading.Thread(target=http.serve_forever, daemon=True)

@@ -45,6 +45,16 @@ def parser():
     compact.add_argument('table')
     compact.add_argument('--target-rows', type=int, default=10000)
     compact.add_argument('--partition-file')
+    compact_prepare = commands.add_parser('compact-prepare')
+    compact_prepare.add_argument('table')
+    compact_prepare.add_argument('--target-rows', type=int, default=10000)
+    compact_prepare.add_argument('--partition-file')
+    compact_commit = commands.add_parser('compact-commit')
+    compact_commit.add_argument('job_id')
+    compact_abort = commands.add_parser('compact-abort')
+    compact_abort.add_argument('job_id')
+    compact_jobs = commands.add_parser('compact-jobs')
+    compact_jobs.add_argument('table')
     query = commands.add_parser('query')
     query.add_argument('table')
     query.add_argument('predicate_file')
@@ -113,6 +123,15 @@ def execute(lake, args):
     if operation == 'compact':
         partition = json_file(args.partition_file) if args.partition_file else None
         return lake.maintenance.compact(args.table, partition, args.target_rows)
+    if operation == 'compact-prepare':
+        partition = json_file(args.partition_file) if args.partition_file else None
+        return lake.compaction.prepare(args.table, partition, args.target_rows)
+    if operation == 'compact-commit':
+        return lake.compaction.commit(args.job_id)
+    if operation == 'compact-abort':
+        return lake.compaction.abort(args.job_id)
+    if operation == 'compact-jobs':
+        return lake.compaction.jobs(args.table)
     if operation == 'query':
         return list(lake.scan.where(args.table, json_file(args.predicate_file), args.snapshot))
     if operation == 'export':

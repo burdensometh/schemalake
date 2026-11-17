@@ -4,10 +4,11 @@ from .writer import DataWriter
 
 
 class Maintenance:
-    def __init__(self, catalog, objects):
+    def __init__(self, catalog, objects, planner=None):
         self.catalog = catalog
         self.objects = objects
         self.committer = SnapshotCommitter(catalog, objects)
+        self.planner = planner
 
     def partition_filter(self, schema, partition):
         fields = {field.name: field for field in schema.fields}
@@ -37,24 +38,11 @@ class Maintenance:
         return {'table': table_name, 'snapshot_id': snapshot, 'rows': sum(f['row_count'] for f in files)}
 
     def compact(self, table_name, partition=None, target_rows=10000, expected_head=None):
-        writer = DataWriter(self.objects, target_rows)
-        with self.catalog.transaction(True) as connection:
-            table = self.catalog.table(table_name, connection)
-            if expected_head is not None and expected_head != table['head']:
-                raise Conflict('compaction head changed')
-            schema = self.catalog.schema(table_name, connection=connection)
-            selected = None if partition is None else self.partition_filter(schema, partition)
-            files = self.committer.current(connection, table_name)
-            chosen = [file for file in files if selected is None or file['partition'] == selected]
-            retained = [file for file in files if file not in chosen]
-            rows = []
-            for file in chosen:
-                rows.extend(self.objects.read_rows(file))
-            added = writer.write(table_name, table['schema_version'], schema, rows)
-            snapshot = self.committer.commit(connection, table_name, 'compact', retained + added,
-                                             table['head'], {'replaced_files': len(chosen)})
-        return {'table': table_name, 'snapshot_id': snapshot, 'files_before': len(chosen),
-                'files_after': len(added), 'rows': len(rows)}
+        if self.planner is None:
+            from .compaction import CompactionPlanner
+            self.planner = CompactionPlanner(self.catalog, self.objects)
+        job = self.planner.prepare(table_name, partition, target_rows, expected_head)
+        return self.planner.commit(job['job_id'])
 
     def drop_partition(self, table_name, partition, expected_head=None):
         return self.replace(table_name, [], partition, expected_head)
