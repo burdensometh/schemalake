@@ -24,10 +24,11 @@ class KeyIndexes:
                 entries[key] = (canonical(file), ordinal)
         with self.catalog.transaction(True) as connection:
             head = self.catalog.table(table_name, connection)['head']
+            if head != plan['snapshot_id']:
+                raise Conflict('table head changed during index build')
             connection.execute('DELETE FROM lookup_indexes WHERE table_name=?', (table_name,))
             connection.execute('INSERT INTO lookup_indexes VALUES (?,?,?,?,?)',
                                (table_name, plan['snapshot_id'], canonical(list(schema.primary_key)), len(entries), timestamp()))
-            connection.commit()
             connection.executemany('INSERT INTO lookup_entries VALUES (?,?,?,?)',
                                    ((table_name, key, file, ordinal) for key, (file, ordinal) in entries.items()))
             self.catalog.event(connection, table_name, 'index_built', {'snapshot_id': plan['snapshot_id']})
@@ -47,7 +48,7 @@ class KeyIndexes:
         key = self.normalized_key(schema, values)
         with self.catalog.transaction() as connection:
             index = connection.execute('SELECT * FROM lookup_indexes WHERE table_name=?', (table_name,)).fetchone()
-            if index:
+            if index and index['snapshot_id'] == plan['snapshot_id']:
                 entry = connection.execute('SELECT * FROM lookup_entries WHERE table_name=? AND row_key=?',
                                            (table_name, key)).fetchone()
                 if entry is None:
@@ -94,7 +95,7 @@ class KeyIndexes:
             return (low is None or key >= low) and (high is None or key < high or (include_upper and key == high))
         with self.catalog.transaction() as connection:
             index = connection.execute('SELECT snapshot_id FROM lookup_indexes WHERE table_name=?', (table_name,)).fetchone()
-            usable = bool(index)
+            usable = bool(index) and index['snapshot_id'] == plan['snapshot_id']
             entries = list(connection.execute('SELECT * FROM lookup_entries WHERE table_name=?', (table_name,))) if usable else []
         rows = []
         if usable:
